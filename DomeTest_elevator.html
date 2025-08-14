@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Geodesic Half-Dome with Endless Falling Planes</title>
+<style>
+  body { margin:0; overflow:hidden; }
+
+  .collisionOverlay {
+    position: absolute;
+    top: 0;
+    width: 350px;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    color: #fff;
+    font-family: monospace;
+    font-size: 15px;
+    overflow: visible; /* no scrollbars */
+    background: none; /* transparent background */
+    padding: 8px;
+  }
+
+  #collisionOverlay1 { right: 0; }
+  #collisionOverlay2 { left: 0; margin-left: 70px; }
+
+  .collisionOverlay .collisionList {
+    flex: 1;
+    overflow: visible;
+  }
+
+  .collisionOverlay div { pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="collisionOverlay1" class="collisionOverlay"></div>
+<div id="collisionOverlay2" class="collisionOverlay"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script>
+
+// ===== Scene & Camera =====
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x222222);
+
+const radius = 6;  
+const detail = 3;
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 200);
+camera.position.set(radius*2, radius*2, radius*2);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ===== Lights =====
+scene.add(new THREE.AmbientLight(0xffffff,0.5));
+const light = new THREE.DirectionalLight(0xffffff, 0.8);
+light.position.set(radius*3, radius*3, radius*3);
+scene.add(light);
+
+// ===== Geodesic Dome =====
+const geo = new THREE.IcosahedronGeometry(radius, detail);
+const vertices = geo.attributes.position;
+for (let i=0; i<vertices.count; i++){
+    if (vertices.getY(i) < 0){
+        vertices.setY(i, -0.001);
+    }
+}
+vertices.needsUpdate = true;
+
+const domeMat = new THREE.MeshPhongMaterial({color:0x00ccff, wireframe:true});
+const dome = new THREE.Mesh(geo, domeMat);
+scene.add(dome);
+
+// ===== Precompute dome triangles =====
+const domeTriangles = [];
+for (let i = 0; i < vertices.count; i += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(vertices, i);
+    const b = new THREE.Vector3().fromBufferAttribute(vertices, i + 1);
+    const c = new THREE.Vector3().fromBufferAttribute(vertices, i + 2);
+    domeTriangles.push(new THREE.Triangle(a.clone(), b.clone(), c.clone()));
+}
+
+// ===== Fill meshes =====
+const fillGroup = new THREE.Group();
+scene.add(fillGroup);
+const fillMats = [];
+
+for (let tri of domeTriangles){
+    const geom = new THREE.BufferGeometry();
+    const verts = new Float32Array([
+        tri.a.x, tri.a.y, tri.a.z,
+        tri.b.x, tri.b.y, tri.b.z,
+        tri.c.x, tri.c.y, tri.c.z
+    ]);
+    geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+
+    const mat = new THREE.MeshPhongMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.0,
+        side: THREE.DoubleSide
+    });
+    fillMats.push(mat);
+
+    const mesh = new THREE.Mesh(geom, mat);
+    fillGroup.add(mesh);
+}
+
+// ===== Plane Setup =====
+const planes = [];
+const planeCount = 5;
+let planeSpacing = 1.5 * 10 * 0.5 * 0.7; // halve then reduce 30% more
+const planeGeo = new THREE.PlaneGeometry(radius*2, radius*2, 1, 1);
+const planeMat1 = new THREE.MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.3});
+const planeMat2 = new THREE.MeshBasicMaterial({color: 0xff8800, transparent: true, opacity: 0.3});
+
+for (let i=0; i<planeCount; i++){
+    const mat = (i%2===0) ? planeMat1.clone() : planeMat2.clone();
+    const plane = new THREE.Mesh(planeGeo, mat);
+    plane.rotation.x = -Math.PI/2;
+    plane.position.y = radius + i * planeSpacing + 2; // start above dome
+    planes.push(plane);
+    scene.add(plane);
+}
+
+// ===== Overlays =====
+const overlay1 = document.getElementById('collisionOverlay1');
+const overlay2 = document.getElementById('collisionOverlay2');
+
+const header1 = document.createElement('div');
+header1.textContent = 'FluidBurst_1.MP4';
+header1.style.fontWeight = 'bold';
+header1.style.fontSize = '20px';
+header1.style.color = 'rgba(255,255,0,0.6)';
+header1.style.marginTop = '50px';
+overlay1.appendChild(header1);
+
+const collisionList1 = document.createElement('div');
+collisionList1.className = 'collisionList';
+overlay1.appendChild(collisionList1);
+
+const header2 = document.createElement('div');
+header2.textContent = 'FluidBurst_5.MP4';
+header2.style.fontWeight = 'bold';
+header2.style.fontSize = '20px';
+header2.style.color = 'rgba(255,136,0,0.6)';
+header2.style.marginTop = '50px';
+overlay2.appendChild(header2);
+
+const collisionList2 = document.createElement('div');
+collisionList2.className = 'collisionList';
+overlay2.appendChild(collisionList2);
+
+// ===== Animate =====
+let planeSpeed = 0.03 * 3 * 1.3; // previous speed * 30% faster
+
+function animate(){
+    requestAnimationFrame(animate);
+
+    // move planes down
+    for (let plane of planes){
+        plane.position.y -= planeSpeed;
+
+        // loop back above dome
+        if (plane.position.y <= 0) {
+            plane.position.y = radius + planeCount * planeSpacing + 2;
+        }
+    }
+
+    // reset fills
+    for (let mat of fillMats) mat.opacity = 0.0;
+
+    // check intersections
+    const collisions1 = [];
+    const collisions2 = [];
+    planes.forEach((plane,i)=>{
+        const list = (i%2===0) ? collisions1 : collisions2;
+
+        for (let j=0; j<domeTriangles.length; j++){
+            const tri = domeTriangles[j];
+            const minY = Math.min(tri.a.y, tri.b.y, tri.c.y);
+            const maxY = Math.max(tri.a.y, tri.b.y, tri.c.y);
+
+            if (plane.position.y <= maxY && plane.position.y >= minY){
+                fillMats[j].opacity = 0.4;
+                list.push(`Triangle ${j}`);
+            }
+        }
+    });
+
+    // update overlays
+    const time = (Date.now() * 0.001).toFixed(3);
+
+    collisionList1.innerHTML = '';
+    collisions1.forEach(c=>{
+        const div = document.createElement('div');
+        div.textContent = `${c} — ${time}s`;
+        div.style.color = 'rgba(255,255,0,0.6)';
+        collisionList1.appendChild(div);
+    });
+
+    collisionList2.innerHTML = '';
+    collisions2.forEach(c=>{
+        const div = document.createElement('div');
+        div.textContent = `${c} — ${time}s`;
+        div.style.color = 'rgba(255,136,0,0.6)';
+        collisionList2.appendChild(div);
+    });
+
+    renderer.render(scene, camera);
+}
+animate();
+
+// ===== Resize =====
+window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
+</body>
+</html>

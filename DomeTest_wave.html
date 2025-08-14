@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Geodesic Half-Dome with Wave Collider</title>
+<style>
+  body { margin:0; overflow:hidden; }
+
+  .collisionOverlay {
+    position: absolute;
+    top: 0;
+    width: 350px;
+    height: 100vh;
+    overflow: hidden;
+    font-family: monospace;
+    font-size: 15px;
+    padding: 8px;
+    pointer-events: none;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #collisionOverlay1 { right: 0; }
+  #collisionOverlay2 { left: 0; margin-left: 70px; }
+
+  .collisionOverlay .collisionList { flex: 1; overflow-y: hidden; }
+  .collisionOverlay div { pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="collisionOverlay1" class="collisionOverlay"></div>
+<div id="collisionOverlay2" class="collisionOverlay"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script>
+
+// ===== Scene & Camera =====
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x222222);
+
+const radius = 6;
+const detail = 3;
+
+// Camera at eye-level
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 200);
+//camera.position.set(radius*2, radius/2, radius*2);
+camera.position.set(radius*2, radius/2, radius*2);
+camera.lookAt(0, radius/2, 0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ===== Lights =====
+scene.add(new THREE.AmbientLight(0xffffff,0.5));
+const light = new THREE.DirectionalLight(0xffffff, 0.8);
+light.position.set(radius*3, radius*3, radius*3);
+scene.add(light);
+
+// ===== Geodesic Half-Dome =====
+const geo = new THREE.IcosahedronGeometry(radius, detail);
+const vertices = geo.attributes.position;
+for (let i=0; i<vertices.count; i++){
+    if (vertices.getY(i) < 0) vertices.setY(i, 0); // half-dome
+}
+vertices.needsUpdate = true;
+
+const domeMat = new THREE.MeshPhongMaterial({color:0x00ccff, wireframe:true});
+const dome = new THREE.Mesh(geo, domeMat);
+scene.add(dome);
+
+// ===== Bottom Mask =====
+const maskRadius = radius * 1.05;
+const maskGeo = new THREE.CircleGeometry(maskRadius, 64);
+const maskMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+const mask = new THREE.Mesh(maskGeo, maskMat);
+mask.rotation.x = -Math.PI/2;
+mask.position.y = 0;
+scene.add(mask);
+
+// ===== Precompute Dome Triangles =====
+const domeTriangles = [];
+for (let i = 0; i < vertices.count; i += 3){
+    const a = new THREE.Vector3().fromBufferAttribute(vertices, i);
+    const b = new THREE.Vector3().fromBufferAttribute(vertices, i+1);
+    const c = new THREE.Vector3().fromBufferAttribute(vertices, i+2);
+    domeTriangles.push(new THREE.Triangle(a.clone(), b.clone(), c.clone()));
+}
+
+// ===== Fill Meshes =====
+const fillGroup = new THREE.Group();
+scene.add(fillGroup);
+const fillMats = [];
+
+for (let tri of domeTriangles){
+    const geom = new THREE.BufferGeometry();
+    const verts = new Float32Array([
+        tri.a.x, tri.a.y, tri.a.z,
+        tri.b.x, tri.b.y, tri.b.z,
+        tri.c.x, tri.c.y, tri.c.z
+    ]);
+    geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+
+    const mat = new THREE.MeshPhongMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.0,
+        side: THREE.DoubleSide
+    });
+    fillMats.push(mat);
+
+    const mesh = new THREE.Mesh(geom, mat);
+    fillGroup.add(mesh);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+// ===== Single-Hump Wave — Smooth Gentle Roll (with side/front materials) =====
+const wavePeak = radius * 1.1;
+const waveLength = 16;
+const waveDepth = 12;
+const wedgeThickness = 0.2;
+
+const waveShape = new THREE.Shape();
+waveShape.moveTo(0, 0);
+waveShape.bezierCurveTo(
+    waveLength * 0.7, wavePeak * 0.2,
+    waveLength * 0.4, wavePeak * 0.8,
+    waveLength * 0.5, wavePeak
+);
+waveShape.lineTo(waveLength, -wedgeThickness);
+waveShape.lineTo(0, -wedgeThickness);
+waveShape.closePath();
+
+// Materials
+const frontMat = new THREE.MeshBasicMaterial({ color: 0x00ffaa, transparent: true, opacity: 0.5 });
+const sideMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.35 });
+
+// Extrude geometry
+const extrudeSettings = { depth: waveDepth, bevelEnabled: false };
+const waveGeo = new THREE.ExtrudeGeometry(waveShape, extrudeSettings);
+
+// Assign groups: front=0, sides/back=1
+waveGeo.groups.forEach(group => {
+    if (group.materialIndex === 0) group.materialIndex = 0; // front
+    else group.materialIndex = 1; // sides/back
+});
+
+// Mesh with multiple materials
+const waveMesh = new THREE.Mesh(waveGeo, [frontMat, sideMat]);
+scene.add(waveMesh);
+
+
+// ===== Adjust placement =====
+waveMesh.rotation.y = Math.PI /// 2; // 90 degrees around Y
+
+// Align bottom to ground
+const waveBox = new THREE.Box3().setFromObject(waveMesh);
+waveMesh.position.y = -waveBox.min.y;
+
+// Center along X and Z
+const waveCenter = new THREE.Vector3();
+waveBox.getCenter(waveCenter);
+waveMesh.position.x -= waveCenter.x;
+waveMesh.position.z -= waveCenter.z;
+
+// Recompute wave radius for collision
+const waveSize = new THREE.Vector3();
+waveBox.getSize(waveSize);
+const waveRadius = waveSize.length() / 2;
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// ===== Overlay =====
+const overlay1 = document.getElementById('collisionOverlay1');
+const header1 = document.createElement('div');
+header1.textContent = 'CandyWash_01.MP4';
+header1.style.fontWeight = 'bold';
+header1.style.fontSize = '20px';
+header1.style.color = 'rgba(0,255,170,0.6)';
+header1.style.marginTop = '50px';
+overlay1.appendChild(header1);
+
+const collisionList1 = document.createElement('div');
+collisionList1.className = 'collisionList';
+overlay1.appendChild(collisionList1);
+
+
+
+// Precompute dome triangle AABBs once (outside animate)
+const domeTrianglesBoxes = domeTriangles.map(tri => {
+    const box = new THREE.Box3();
+    box.setFromPoints([tri.a, tri.b, tri.c]);
+    return box;
+});
+
+// Compute wave front offset vector (extrusion along Z)
+const waveFrontOffset = new THREE.Vector3(0,0,waveDepth); // adjust if wave rotated differently
+
+function animate() {
+    requestAnimationFrame(animate);
+    const t = Date.now() * 0.001;
+
+    // Wave slides across dome
+    const slideDistance = radius * 2.5;
+    waveMesh.position.x = Math.cos(t * 0.4) * slideDistance;
+
+    // Reset triangle fills
+    for (let mat of fillMats) {
+        mat.opacity = 0.0;
+        mat.color.set(0xffffff);
+    }
+
+    waveMesh.updateMatrixWorld();
+
+    // Wave volume bounding box (front face only)
+    const waveBox = new THREE.Box3().setFromObject(waveMesh);
+
+    // Optionally, shrink the box to only the front face along Z
+    const frontWaveBox = waveBox.clone();
+    frontWaveBox.min.z = waveBox.max.z - waveDepth; // front face thickness
+
+    const collisions = [];
+
+    const waveCenter = frontWaveBox.getCenter(new THREE.Vector3());
+    const waveRadiusApprox = frontWaveBox.getSize(new THREE.Vector3()).length() / 2;
+
+    for (let i = 0; i < domeTriangles.length; i++) {
+        const tri = domeTriangles[i];
+        const triBox = domeTrianglesBoxes[i];
+
+        // Quick bounding-box reject
+        if (!frontWaveBox.intersectsBox(triBox)) continue;
+
+        // Precise check: closest point from triangle to wave center
+        const closest = new THREE.Vector3();
+        tri.closestPointToPoint(waveCenter, closest);
+        const distance = closest.distanceTo(waveCenter);
+
+        if (distance <= waveRadiusApprox) {
+            fillMats[i].opacity = 0.4;
+            fillMats[i].color.set(0xffff00);
+            collisions.push(`Triangle ${i}`);
+        }
+    }
+
+    // Update overlay
+    const time = (Date.now() * 0.001).toFixed(4);
+    collisionList1.innerHTML = '';
+    for (let c of collisions) {
+        const div = document.createElement('div');
+        div.textContent = `${c} — ${time}s`;
+        div.style.color = 'rgba(0,255,170,0.6)';
+        collisionList1.appendChild(div);
+    }
+
+    renderer.render(scene, camera);
+}
+
+
+animate();
+
+
+
+// ===== Resize =====
+window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
+</body>
+</html>

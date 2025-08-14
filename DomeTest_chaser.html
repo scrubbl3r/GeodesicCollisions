@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Geodesic Half-Dome with Sphere Collision</title>
+<style>
+  body { margin:0; overflow:hidden; }
+
+  .collisionOverlay {
+    position: absolute;
+    top: 0;
+    width: 350px;
+    height: 100vh; /* full vertical height */
+    overflow: hidden; /* hide scrollbar */
+    font-family: monospace;
+    font-size: 15px; /* 3x larger */
+    padding: 8px;
+    pointer-events: none;
+    z-index: 10;
+    display: flex;
+    flex-direction: column; /* stack header + list */
+  }
+
+  #collisionOverlay1 {
+    right: 0;
+  }
+
+  #collisionOverlay2 {
+    left: 0;
+    margin-left: 70px;
+  }
+
+  .collisionOverlay .collisionList {
+    flex: 1;           /* fill remaining vertical space */
+    overflow-y: auto;  /* allow scrolling if needed */
+  }
+
+  .collisionOverlay div {
+    pointer-events: none; /* prevent interaction */
+  }
+</style>
+</head>
+<body>
+<div id="collisionOverlay1" class="collisionOverlay"></div>
+<div id="collisionOverlay2" class="collisionOverlay"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script>
+
+// ===== Scene & Camera =====
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x222222);
+
+const radius = 6;  
+const detail = 3;
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 200);
+camera.position.set(radius*2, radius*2, radius*2);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// ===== Lights =====
+scene.add(new THREE.AmbientLight(0xffffff,0.5));
+const light = new THREE.DirectionalLight(0xffffff, 0.8);
+light.position.set(radius*3, radius*3, radius*3);
+scene.add(light);
+
+// ===== Geodesic Dome =====
+const geo = new THREE.IcosahedronGeometry(radius, detail);
+const vertices = geo.attributes.position;
+for (let i=0; i<vertices.count; i++){
+    if (vertices.getY(i) < 0){
+        vertices.setY(i, -0.001);
+    }
+}
+vertices.needsUpdate = true;
+
+const domeMat = new THREE.MeshPhongMaterial({color:0x00ccff, wireframe:true});
+const dome = new THREE.Mesh(geo, domeMat);
+scene.add(dome);
+
+// ===== Fake Bottom Mask =====
+const maskRadius = radius * 1.05;
+const maskGeo = new THREE.CircleGeometry(maskRadius, 64);
+const maskMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+const mask = new THREE.Mesh(maskGeo, maskMat);
+mask.rotation.x = -Math.PI/2;
+mask.position.y = 0;
+scene.add(mask);
+
+// ===== Precompute dome triangles =====
+const domeTriangles = [];
+for (let i = 0; i < vertices.count; i += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(vertices, i);
+    const b = new THREE.Vector3().fromBufferAttribute(vertices, i + 1);
+    const c = new THREE.Vector3().fromBufferAttribute(vertices, i + 2);
+    domeTriangles.push(new THREE.Triangle(a.clone(), b.clone(), c.clone()));
+}
+
+// ===== Fill meshes =====
+const fillGroup = new THREE.Group();
+scene.add(fillGroup);
+const fillMats = [];
+
+for (let tri of domeTriangles){
+    const geom = new THREE.BufferGeometry();
+    const verts = new Float32Array([
+        tri.a.x, tri.a.y, tri.a.z,
+        tri.b.x, tri.b.y, tri.b.z,
+        tri.c.x, tri.c.y, tri.c.z
+    ]);
+    geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+
+    const mat = new THREE.MeshPhongMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.0,
+        side: THREE.DoubleSide
+    });
+    fillMats.push(mat);
+
+    const mesh = new THREE.Mesh(geom, mat);
+    fillGroup.add(mesh);
+}
+
+// ===== Spheres =====
+const sphereRadius = 2;
+
+// Yellow sphere
+const sphereMat1 = new THREE.MeshBasicMaterial({
+    color: 0xffff00,
+    transparent: true,
+    opacity: 0.6
+});
+const sphereGeo = new THREE.SphereGeometry(sphereRadius,16,16);
+const sphere1 = new THREE.Mesh(sphereGeo, sphereMat1);
+scene.add(sphere1);
+
+// Orange sphere (opposite)
+const sphereMat2 = new THREE.MeshBasicMaterial({
+    color: 0xff8800,
+    transparent: true,
+    opacity: 0.6
+});
+const sphere2 = new THREE.Mesh(sphereGeo, sphereMat2);
+scene.add(sphere2);
+
+// ===== Overlays =====
+const overlay1 = document.getElementById('collisionOverlay1');
+const overlay2 = document.getElementById('collisionOverlay2');
+
+// ===== Header & list for first (yellow) overlay =====
+const header1 = document.createElement('div');
+header1.textContent = 'SplashDown_1.MP4';
+header1.style.fontWeight = 'bold';
+header1.style.fontSize = '20px';
+header1.style.color = 'rgba(255,255,0,0.6)';
+header1.style.background = 'rgba(0,0,0,0)';
+header1.style.marginTop = '50px';
+overlay1.appendChild(header1);
+
+const collisionList1 = document.createElement('div');
+collisionList1.className = 'collisionList';
+overlay1.appendChild(collisionList1);
+
+// ===== Header & list for second (orange) overlay =====
+const header2 = document.createElement('div');
+header2.textContent = 'SplashDown_2.MP4';
+header2.style.fontWeight = 'bold';
+header2.style.fontSize = '20px';
+header2.style.color = 'rgba(255,136,0,0.6)'; // orange
+header2.style.background = 'rgba(0,0,0,0)';
+header2.style.marginTop = '50px';
+overlay2.appendChild(header2);
+
+const collisionList2 = document.createElement('div');
+collisionList2.className = 'collisionList';
+overlay2.appendChild(collisionList2);
+
+// ===== Animate =====
+function animate(){
+    requestAnimationFrame(animate);
+
+    const orbitSpeed = 2; // 2× speed
+    const t = Date.now() * 0.001 * orbitSpeed;
+    const orbitRadius = 5;
+    const orbitHeight = radius / 2;
+
+    // Yellow sphere orbit
+    sphere1.position.set(
+        Math.cos(t) * orbitRadius,
+        orbitHeight,
+        Math.sin(t) * orbitRadius
+    );
+
+    // Orange sphere orbit
+    sphere2.position.set(
+        Math.cos(t + Math.PI) * orbitRadius,
+        orbitHeight,
+        Math.sin(t + Math.PI) * orbitRadius
+    );
+
+    // Reset triangle fills
+    for (let mat of fillMats){
+        mat.opacity = 0.0;
+    }
+
+    // Yellow sphere collisions
+    const collisions1 = [];
+    for (let i = 0; i < domeTriangles.length; i++){
+        const tri = domeTriangles[i];
+        const closest = new THREE.Vector3();
+        tri.closestPointToPoint(sphere1.position, closest);
+        const distance = closest.distanceTo(sphere1.position);
+        if (distance <= sphereRadius){
+            fillMats[i].opacity = 0.4;
+            collisions1.push(`Triangle ${i}`);
+        }
+    }
+
+    // Orange sphere collisions
+    const collisions2 = [];
+    for (let i = 0; i < domeTriangles.length; i++){
+        const tri = domeTriangles[i];
+        const closest = new THREE.Vector3();
+        tri.closestPointToPoint(sphere2.position, closest);
+        const distance = closest.distanceTo(sphere2.position);
+        if (distance <= sphereRadius){
+            fillMats[i].opacity = 0.4;
+            collisions2.push(`Triangle ${i}`);
+        }
+    }
+
+    // Update overlays
+    const time = (Date.now() * 0.001).toFixed(4);
+
+    collisionList1.innerHTML = '';
+    for (let c of collisions1){
+        const div = document.createElement('div');
+        div.textContent = `${c} — ${time}s`;
+        div.style.color = 'rgba(255,255,0,0.6)'; // yellow
+        collisionList1.appendChild(div);
+    }
+
+    collisionList2.innerHTML = '';
+    for (let c of collisions2){
+        const div = document.createElement('div');
+        div.textContent = `${c} — ${time}s`;
+        div.style.color = 'rgba(255,136,0,0.6)'; // orange
+        collisionList2.appendChild(div);
+    }
+
+    renderer.render(scene, camera);
+}
+animate();
+
+// ===== Resize =====
+window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
