@@ -1,0 +1,2 @@
+# GeodesicCollisions
+geodesic collision prototypes
