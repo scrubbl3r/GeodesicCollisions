@@ -5,25 +5,13 @@
 <title>Geodesic Half-Dome with Wave Collider</title>
 <style>
   body { margin:0; overflow:hidden; }
-
   .collisionOverlay {
-    position: absolute;
-    top: 0;
-    width: 350px;
-    height: 100vh;
-    overflow: hidden;
-    font-family: monospace;
-    font-size: 15px;
-    padding: 8px;
-    pointer-events: none;
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
+    position: absolute; top: 0; width: 350px; height: 100vh; overflow: hidden;
+    font-family: monospace; font-size: 15px; padding: 8px; pointer-events: none; z-index: 10;
+    display: flex; flex-direction: column;
   }
-
   #collisionOverlay1 { right: 0; }
   #collisionOverlay2 { left: 0; margin-left: 70px; }
-
   .collisionOverlay .collisionList { flex: 1; overflow-y: hidden; }
   .collisionOverlay div { pointer-events: none; }
 </style>
@@ -44,7 +32,6 @@ const detail = 3;
 
 // Camera at eye-level
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 200);
-//camera.position.set(radius*2, radius/2, radius*2);
 camera.position.set(radius*2, radius/2, radius*2);
 camera.lookAt(0, radius/2, 0);
 
@@ -62,7 +49,7 @@ scene.add(light);
 const geo = new THREE.IcosahedronGeometry(radius, detail);
 const vertices = geo.attributes.position;
 for (let i=0; i<vertices.count; i++){
-    if (vertices.getY(i) < 0) vertices.setY(i, 0); // half-dome
+  if (vertices.getY(i) < 0) vertices.setY(i, 0); // half-dome
 }
 vertices.needsUpdate = true;
 
@@ -79,13 +66,13 @@ mask.rotation.x = -Math.PI/2;
 mask.position.y = 0;
 scene.add(mask);
 
-// ===== Precompute Dome Triangles =====
+// ===== Precompute Dome Triangles (baseline) =====
 const domeTriangles = [];
 for (let i = 0; i < vertices.count; i += 3){
-    const a = new THREE.Vector3().fromBufferAttribute(vertices, i);
-    const b = new THREE.Vector3().fromBufferAttribute(vertices, i+1);
-    const c = new THREE.Vector3().fromBufferAttribute(vertices, i+2);
-    domeTriangles.push(new THREE.Triangle(a.clone(), b.clone(), c.clone()));
+  const a = new THREE.Vector3().fromBufferAttribute(vertices, i);
+  const b = new THREE.Vector3().fromBufferAttribute(vertices, i+1);
+  const c = new THREE.Vector3().fromBufferAttribute(vertices, i+2);
+  domeTriangles.push(new THREE.Triangle(a.clone(), b.clone(), c.clone()));
 }
 
 // ===== Fill Meshes =====
@@ -94,86 +81,79 @@ scene.add(fillGroup);
 const fillMats = [];
 
 for (let tri of domeTriangles){
-    const geom = new THREE.BufferGeometry();
-    const verts = new Float32Array([
-        tri.a.x, tri.a.y, tri.a.z,
-        tri.b.x, tri.b.y, tri.b.z,
-        tri.c.x, tri.c.y, tri.c.z
-    ]);
-    geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  const geom = new THREE.BufferGeometry();
+  const verts = new Float32Array([
+    tri.a.x, tri.a.y, tri.a.z,
+    tri.b.x, tri.b.y, tri.b.z,
+    tri.c.x, tri.c.y, tri.c.z
+  ]);
+  geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
 
-    const mat = new THREE.MeshPhongMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.0,
-        side: THREE.DoubleSide
-    });
-    fillMats.push(mat);
+  const mat = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.0,
+    side: THREE.DoubleSide
+  });
+  fillMats.push(mat);
 
-    const mesh = new THREE.Mesh(geom, mat);
-    fillGroup.add(mesh);
+  const mesh = new THREE.Mesh(geom, mat);
+  fillGroup.add(mesh);
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ===== Economical Extruded Wave (volume; depth = dome diameter) =====
 
+const waveLength = 16;                // X-length of the wave
+const waveDepth  = 2 * radius;        // width along Z (diameter of the dome)
+const wavePeak   = radius * 1.1;      // peak height
+const wedgeThickness = 0.2;           // base thickness
 
-// ===== Single-Hump Wave — Smooth Gentle Roll (with side/front materials) =====
-const wavePeak = radius * 1.1;
-const waveLength = 16;
-const waveDepth = 12;
-const wedgeThickness = 0.2;
+// Build both the Shape **and** the 2D outline array we can reuse for point-in-polygon
+function buildWaveShapeAndOutline(L, A, base=0, samples=17) {
+  const top = [];
+  for (let i = 0; i < samples; i++) {
+    const t = i / (samples - 1);
+    const x = t * L;
+    const y = base + A * Math.sin(Math.PI * t);
+    top.push(new THREE.Vector2(x, y));
+  }
+  const outline = [
+    new THREE.Vector2(0, base),
+    ...top,
+    new THREE.Vector2(L, base - wedgeThickness),
+    new THREE.Vector2(0,  base - wedgeThickness),
+  ];
+  const shape = new THREE.Shape(outline);
+  return { shape, outline };
+}
 
-const waveShape = new THREE.Shape();
-waveShape.moveTo(0, 0);
-waveShape.bezierCurveTo(
-    waveLength * 0.7, wavePeak * 0.2,
-    waveLength * 0.4, wavePeak * 0.8,
-    waveLength * 0.5, wavePeak
-);
-waveShape.lineTo(waveLength, -wedgeThickness);
-waveShape.lineTo(0, -wedgeThickness);
-waveShape.closePath();
+const { shape: waveShape, outline: waveOutline2D } = buildWaveShapeAndOutline(waveLength, wavePeak, 0, 17);
 
 // Materials
-const frontMat = new THREE.MeshBasicMaterial({ color: 0x00ffaa, transparent: true, opacity: 0.5 });
-const sideMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.35 });
+const capMat  = new THREE.MeshBasicMaterial({ color: 0x00ffaa, transparent: true, opacity: 0.5 }); // front/back
+const sideMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.35 }); // sides
 
-// Extrude geometry
-const extrudeSettings = { depth: waveDepth, bevelEnabled: false };
-const waveGeo = new THREE.ExtrudeGeometry(waveShape, extrudeSettings);
-
-// Assign groups: front=0, sides/back=1
-waveGeo.groups.forEach(group => {
-    if (group.materialIndex === 0) group.materialIndex = 0; // front
-    else group.materialIndex = 1; // sides/back
+const waveGeo = new THREE.ExtrudeGeometry(waveShape, {
+  depth: waveDepth,
+  bevelEnabled: false,
+  steps: 1
 });
+waveGeo.computeVertexNormals();
 
-// Mesh with multiple materials
-const waveMesh = new THREE.Mesh(waveGeo, [frontMat, sideMat]);
+const waveMesh = new THREE.Mesh(waveGeo, [sideMat, capMat]);
 scene.add(waveMesh);
 
-
-// ===== Adjust placement =====
-waveMesh.rotation.y = Math.PI /// 2; // 90 degrees around Y
-
-// Align bottom to ground
-const waveBox = new THREE.Box3().setFromObject(waveMesh);
-waveMesh.position.y = -waveBox.min.y;
-
-// Center along X and Z
-const waveCenter = new THREE.Vector3();
-waveBox.getCenter(waveCenter);
-waveMesh.position.x -= waveCenter.x;
-waveMesh.position.z -= waveCenter.z;
-
-// Recompute wave radius for collision
-const waveSize = new THREE.Vector3();
-waveBox.getSize(waveSize);
-const waveRadius = waveSize.length() / 2;
-
-
+// ===== Placement =====
+waveMesh.rotation.y = Math.PI; // face the dome
+{
+  const waveBox = new THREE.Box3().setFromObject(waveMesh);
+  waveMesh.position.y = -waveBox.min.y;
+  const waveCenter = new THREE.Vector3(); waveBox.getCenter(waveCenter);
+  waveMesh.position.x -= waveCenter.x;
+  waveMesh.position.z -= waveCenter.z;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -192,90 +172,104 @@ const collisionList1 = document.createElement('div');
 collisionList1.className = 'collisionList';
 overlay1.appendChild(collisionList1);
 
-
-
-// Precompute dome triangle AABBs once (outside animate)
+// Precompute dome triangle AABBs once (outside animate) – still useful for early reject
 const domeTrianglesBoxes = domeTriangles.map(tri => {
-    const box = new THREE.Box3();
-    box.setFromPoints([tri.a, tri.b, tri.c]);
-    return box;
+  const box = new THREE.Box3();
+  box.setFromPoints([tri.a, tri.b, tri.c]);
+  return box;
 });
 
-// Compute wave front offset vector (extrusion along Z)
-const waveFrontOffset = new THREE.Vector3(0,0,waveDepth); // adjust if wave rotated differently
-
-function animate() {
-    requestAnimationFrame(animate);
-    const t = Date.now() * 0.001;
-
-    // Wave slides across dome
-    const slideDistance = radius * 2.5;
-    waveMesh.position.x = Math.cos(t * 0.4) * slideDistance;
-
-    // Reset triangle fills
-    for (let mat of fillMats) {
-        mat.opacity = 0.0;
-        mat.color.set(0xffffff);
-    }
-
-    waveMesh.updateMatrixWorld();
-
-    // Wave volume bounding box (front face only)
-    const waveBox = new THREE.Box3().setFromObject(waveMesh);
-
-    // Optionally, shrink the box to only the front face along Z
-    const frontWaveBox = waveBox.clone();
-    frontWaveBox.min.z = waveBox.max.z - waveDepth; // front face thickness
-
-    const collisions = [];
-
-    const waveCenter = frontWaveBox.getCenter(new THREE.Vector3());
-    const waveRadiusApprox = frontWaveBox.getSize(new THREE.Vector3()).length() / 2;
-
-    for (let i = 0; i < domeTriangles.length; i++) {
-        const tri = domeTriangles[i];
-        const triBox = domeTrianglesBoxes[i];
-
-        // Quick bounding-box reject
-        if (!frontWaveBox.intersectsBox(triBox)) continue;
-
-        // Precise check: closest point from triangle to wave center
-        const closest = new THREE.Vector3();
-        tri.closestPointToPoint(waveCenter, closest);
-        const distance = closest.distanceTo(waveCenter);
-
-        if (distance <= waveRadiusApprox) {
-            fillMats[i].opacity = 0.4;
-            fillMats[i].color.set(0xffff00);
-            collisions.push(`Triangle ${i}`);
-        }
-    }
-
-    // Update overlay
-    const time = (Date.now() * 0.001).toFixed(4);
-    collisionList1.innerHTML = '';
-    for (let c of collisions) {
-        const div = document.createElement('div');
-        div.textContent = `${c} — ${time}s`;
-        div.style.color = 'rgba(0,255,170,0.6)';
-        collisionList1.appendChild(div);
-    }
-
-    renderer.render(scene, camera);
+// --------- Point-in-polygon (even–odd rule) for 2D outline ----------
+function pointInPoly(poly, p) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    const intersect = ((yi > p.y) !== (yj > p.y)) &&
+                      (p.x < ( (xj - xi) * (p.y - yi) / ((yj - yi) || 1e-12) + xi ));
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
+// Reusable temps
+const invWave = new THREE.Matrix4();
+const aL = new THREE.Vector3(), bL = new THREE.Vector3(), cL = new THREE.Vector3();
+const p2 = new THREE.Vector2();
+const waveAABB = new THREE.Box3();
+
+function vertInsideWaveExtrusion(vLocal) {
+  // Z inside slab [0, depth] and (x,y) inside 2D outline
+  if (vLocal.z < 0 || vLocal.z > waveDepth) return false;
+  p2.set(vLocal.x, vLocal.y);
+  return pointInPoly(waveOutline2D, p2);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = Date.now() * 0.001;
+
+  // Wave slides across dome
+  const slideDistance = radius * 2.5;
+  waveMesh.position.x = Math.cos(t * 0.4) * slideDistance;
+
+  // Reset fills
+  for (let mat of fillMats) { mat.opacity = 0.0; mat.color.set(0xffffff); }
+
+  // Update wave transforms and its AABB (broad-phase)
+  waveMesh.updateMatrixWorld(true);
+  invWave.copy(waveMesh.matrixWorld).invert();
+  waveAABB.setFromObject(waveMesh);
+
+  const collisions = [];
+
+  for (let i = 0; i < domeTriangles.length; i++) {
+    const tri = domeTriangles[i];
+    const triBox = domeTrianglesBoxes[i];
+
+    // Cheap reject: triangle AABB vs wave AABB
+    if (!waveAABB.intersectsBox(triBox)) continue;
+
+    // Transform triangle vertices into WAVE LOCAL SPACE
+    aL.copy(tri.a).applyMatrix4(invWave);
+    bL.copy(tri.b).applyMatrix4(invWave);
+    cL.copy(tri.c).applyMatrix4(invWave);
+
+    // If ANY vertex lies inside the extruded wave volume, count it as a hit
+    // (This is accurate for small dome faces; captures the “plane hits triangle” cases.)
+    const hit =
+      vertInsideWaveExtrusion(aL) ||
+      vertInsideWaveExtrusion(bL) ||
+      vertInsideWaveExtrusion(cL);
+
+    if (hit) {
+      fillMats[i].opacity = 0.4;
+      fillMats[i].color.set(0xffff00);
+      collisions.push(`Triangle ${i}`);
+    }
+  }
+
+  // Overlay
+  const time = (Date.now() * 0.001).toFixed(4);
+  collisionList1.innerHTML = '';
+  for (let c of collisions) {
+    const div = document.createElement('div');
+    div.textContent = `${c} — ${time}s`;
+    div.style.color = 'rgba(0,255,170,0.6)';
+    collisionList1.appendChild(div);
+  }
+
+  renderer.render(scene, camera);
+}
 
 animate();
 
-
-
 // ===== Resize =====
 window.addEventListener('resize', ()=>{
-    camera.aspect = window.innerWidth/window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
 </script>
 </body>
 </html>
