@@ -22,7 +22,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
 <script>
-
 // ===== Scene & Camera =====
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x222222);
@@ -30,7 +29,6 @@ scene.background = new THREE.Color(0x222222);
 const radius = 6;
 const detail = 3;
 
-// Camera at eye-level
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 200);
 camera.position.set(radius*2, radius/2, radius*2);
 camera.lookAt(0, radius/2, 0);
@@ -105,7 +103,7 @@ for (let tri of domeTriangles){
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ===== Economical Extruded Wave (volume; depth = dome diameter) =====
 
-const waveLength = 16;                // X-length of the wave
+const waveLength = 20;                // X-length of the wave
 const waveDepth  = 2 * radius;        // width along Z (diameter of the dome)
 const wavePeak   = radius * 1.1;      // peak height
 const wedgeThickness = 0.2;           // base thickness
@@ -192,25 +190,38 @@ function pointInPoly(poly, p) {
   return inside;
 }
 
-// Reusable temps
+// ===== Reusable temps =====
 const invWave = new THREE.Matrix4();
 const aL = new THREE.Vector3(), bL = new THREE.Vector3(), cL = new THREE.Vector3();
 const p2 = new THREE.Vector2();
 const waveAABB = new THREE.Box3();
+const EPS_Z = 1e-4; // tiny slab tolerance
 
 function vertInsideWaveExtrusion(vLocal) {
-  // Z inside slab [0, depth] and (x,y) inside 2D outline
-  if (vLocal.z < 0 || vLocal.z > waveDepth) return false;
+  // tolerant slab check and 2D polygon check
+  if (vLocal.z < -EPS_Z || vLocal.z > waveDepth + EPS_Z) return false;
   p2.set(vLocal.x, vLocal.y);
+  return pointInPoly(waveOutline2D, p2);
+}
+
+// Test if edge AB crosses z = zPlane in wave-local space; if so, check XY against outline
+function edgePlaneHit(A, B, zPlane) {
+  const dz = B.z - A.z;
+  if (Math.abs(dz) < 1e-9) return false; // parallel or coincident
+  const t = (zPlane - A.z) / dz;
+  if (t < -EPS_Z || t > 1 + EPS_Z) return false; // intersection not within segment
+  const x = A.x + t * (B.x - A.x);
+  const y = A.y + t * (B.y - A.y);
+  p2.set(x, y);
   return pointInPoly(waveOutline2D, p2);
 }
 
 function animate() {
   requestAnimationFrame(animate);
-  const t = Date.now() * 0.001;
+  const t = Date.now() * 0.0015;
 
   // Wave slides across dome
-  const slideDistance = radius * 2.5;
+  const slideDistance = radius * 4.4;
   waveMesh.position.x = Math.cos(t * 0.4) * slideDistance;
 
   // Reset fills
@@ -235,12 +246,13 @@ function animate() {
     bL.copy(tri.b).applyMatrix4(invWave);
     cL.copy(tri.c).applyMatrix4(invWave);
 
-    // If ANY vertex lies inside the extruded wave volume, count it as a hit
-    // (This is accurate for small dome faces; captures the “plane hits triangle” cases.)
+    // Vertex-inside OR edge crossing the back/front cap with XY inside outline
     const hit =
       vertInsideWaveExtrusion(aL) ||
       vertInsideWaveExtrusion(bL) ||
-      vertInsideWaveExtrusion(cL);
+      vertInsideWaveExtrusion(cL) ||
+      edgePlaneHit(aL, bL, 0) || edgePlaneHit(bL, cL, 0) || edgePlaneHit(cL, aL, 0) ||               // back cap (z=0)
+      edgePlaneHit(aL, bL, waveDepth) || edgePlaneHit(bL, cL, waveDepth) || edgePlaneHit(cL, aL, waveDepth); // front cap
 
     if (hit) {
       fillMats[i].opacity = 0.4;
